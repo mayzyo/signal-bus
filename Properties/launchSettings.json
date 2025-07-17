@@ -1,0 +1,17 @@
+{
+  "profiles": {
+    "SignalBus": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Development",
+        "TIMESCALE_BATCH_SIZE": "100",
+        "TIMESCALE_BATCH_TIMEOUT_SECONDS": "5",
+      },
+      "dotnetRunMessages": true
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  },
+  "$schema": "http://json.schemastore.org/launchsettings.json"
+}
