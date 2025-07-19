@@ -28,18 +28,27 @@ public class MessageRecord
     [MaxLength(255)]
     public string Source { get; set; } = string.Empty;
 
+    [Column("group_chat")]
+    [MaxLength(255)]
+    public string? GroupChat { get; set; }
+
     [Column("content")]
-    public string Content { get; set; }
+    public string? Content { get; set; }
+
+    [Column("mentions")]
+    public string? Mentions { get; set; }
 
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-    public static MessageRecord FromSignalMessage(SignalMessage signalMessage)
+    public static MessageRecord FromSignalMessage(SignalMessage signalMessage, string? groupId)
     {
         var record = new MessageRecord
         {
             Target = signalMessage.Account,
             Source = signalMessage.Envelope.Source,
+            GroupChat = groupId,
+            Mentions = signalMessage.Envelope.DataMessage.Mentions is not null ? string.Join(", ", signalMessage.Envelope.DataMessage.Mentions.Select(m => m.Name)) : null,
             Content = signalMessage.Envelope.DataMessage.Message,
             Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(signalMessage.Envelope.DataMessage.Timestamp).UtcDateTime,
             SignalReceivedTimestamp = DateTimeOffset.FromUnixTimeMilliseconds(signalMessage.Envelope.ServerReceivedTimestamp).UtcDateTime,
@@ -53,7 +62,7 @@ public class MessageRecord
         return record;
     }
 
-    public static IEnumerable<MessageRecord> FromSignalSendRequest(SignalSendRequest signalSendRequest, long receivedTimestamp)
+    public static IEnumerable<MessageRecord> FromSignalSendRequest(SignalSendRequest signalSendRequest, long receivedTimestamp, string? groupId)
     {
         var currentTimestamp = DateTime.UtcNow;
 
@@ -61,6 +70,7 @@ public class MessageRecord
         {
             Target = recipient,
             Source = signalSendRequest.Number,
+            GroupChat = groupId,
             SignalReceivedTimestamp = DateTimeOffset.FromUnixTimeMilliseconds(receivedTimestamp).UtcDateTime,
             Content = signalSendRequest.Message,
             Timestamp = currentTimestamp

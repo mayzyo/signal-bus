@@ -20,6 +20,8 @@ namespace SignalBus
             // Register HttpClient and services
             builder.Services.AddHttpClient<IAssistantService, AssistantService>();
             builder.Services.AddHttpClient<ISignalService, SignalService>();
+            builder.Services.AddHttpClient<ISignalGroupService, SignalGroupService>();
+            builder.Services.AddSingleton<IAuthorizationService, AuthorizationService>();
             
             // Register TimescaleDB service as both hosted service and injectable service
             builder.Services.AddSingleton<ITimescaleDbService, TimescaleDbService>();

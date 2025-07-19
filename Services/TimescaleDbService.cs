@@ -158,10 +158,10 @@ public class TimescaleDbService : BackgroundService, ITimescaleDbService
             const string insertSql = @"
                 INSERT INTO signal_messages (
                     timestamp, signal_received_timestamp, signal_delivered_timestamp,
-                    target, source, content, created_at
+                    target, source, group_chat, mentions, content, created_at
                 ) VALUES (
                     @timestamp, @signal_received_timestamp, @signal_delivered_timestamp,
-                    @target, @source, @content, @created_at
+                    @target, @source, @group_chat, @mentions, @content, @created_at
                 )";
 
             using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -177,6 +177,8 @@ public class TimescaleDbService : BackgroundService, ITimescaleDbService
                     command.Parameters.AddWithValue("@signal_delivered_timestamp", (object?)message.SignalDeliveredTimestamp ?? DBNull.Value);
                     command.Parameters.AddWithValue("@target", message.Target);
                     command.Parameters.AddWithValue("@source", message.Source);
+                    command.Parameters.AddWithValue("@group_chat", (object?)message.GroupChat ?? DBNull.Value);
+                    command.Parameters.AddWithValue("@mentions", (object?)message.Mentions ?? DBNull.Value);
                     command.Parameters.AddWithValue("@content", (object?)message.Content ?? DBNull.Value);
                     command.Parameters.AddWithValue("@created_at", message.CreatedAt);
 
@@ -221,6 +223,8 @@ public class TimescaleDbService : BackgroundService, ITimescaleDbService
                     signal_delivered_timestamp TIMESTAMPTZ,
                     target VARCHAR(255) NOT NULL,
                     source VARCHAR(255) NOT NULL,
+                    group_chat VARCHAR(255),
+                    mentions TEXT,
                     content TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );";

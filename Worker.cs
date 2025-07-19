@@ -16,12 +16,24 @@ namespace SignalBus
     {
     }
 
-    public class Worker(ILogger<Worker> logger, IConfiguration configuration, IAssistantService assistantService, ISignalService signalService, ITimescaleDbService timescaleDbService) : BackgroundService
+    public class Worker(
+        ILogger<Worker> logger,
+        IConfiguration configuration,
+        IAssistantService assistantService,
+        ISignalService signalService,
+        ITimescaleDbService timescaleDbService,
+        ISignalGroupService signalGroupService,
+        IAuthorizationService authorizationService
+    ) : BackgroundService
     {
         private readonly ILogger<Worker> _logger = logger;
         private readonly IAssistantService _assistantService = assistantService;
         private readonly ISignalService _signalService = signalService;
+        private readonly ISignalGroupService _signalGroupService = signalGroupService;
         private readonly ITimescaleDbService _timescaleDbService = timescaleDbService;
+        private readonly IAuthorizationService _authorizationService = authorizationService;
+
+        private readonly string _registeredAccount = configuration["REGISTERED_ACCOUNT"] ?? throw new InvalidOperationException("REGISTERED_ACCOUNT environment variable is required");
         private readonly Uri _socketUri = new(
             $"ws://{configuration["SIGNAL_ENDPOINT"] ?? throw new InvalidOperationException("SIGNAL_ENDPOINT environment variable is required")}/v1/receive/{configuration["REGISTERED_ACCOUNT"] ?? throw new InvalidOperationException("REGISTERED_ACCOUNT environment variable is required")}"
         );
@@ -80,12 +92,27 @@ namespace SignalBus
 
                     if (signalMessage.Envelope.DataMessage != null)
                     {
-                        _logger.LogInformation("Data message: {Message}", signalMessage.Envelope.DataMessage.Message);
+                        signalMessage.Envelope.DataMessage.Message ??= signalMessage.Envelope.DataMessage.Sticker != null ? "STICKER" : signalMessage.Envelope.DataMessage.Attachments != null ? "ATTACHMENT" : null;
+                        _logger.LogDebug("Data message: {Message}", signalMessage.Envelope.DataMessage.Message);
+
+                        if (!_authorizationService.IsAuthorized(signalMessage.Envelope.Source))
+                        {
+                            _logger.LogWarning("Unauthorized contact: {Source} ignored", signalMessage.Envelope.Source);
+                            return;
+                        }
+
+                        var source = signalMessage.Envelope.Source;
+                        string? group = null;
+
+                        if(signalMessage.Envelope.DataMessage.GroupInfo != null)
+                        {
+                            group = await _signalGroupService.GetGroupIdAsync(signalMessage.Envelope.DataMessage.GroupInfo.GroupId);
+                        }
 
                         // Queue message for TimescaleDB insertion (fire and forget)
                         try
                         {
-                            var messageRecord = MessageRecord.FromSignalMessage(signalMessage);
+                            var messageRecord = MessageRecord.FromSignalMessage(signalMessage, group);
                             await _timescaleDbService.QueueMessageAsync(messageRecord);
                             _logger.LogDebug("Message queued for TimescaleDB insertion");
                         }
@@ -94,26 +121,37 @@ namespace SignalBus
                             _logger.LogError(ex, "Failed to queue message for TimescaleDB - continuing with processing");
                         }
 
-                        await _signalService.IndicateTypingAsync();
+                        // For group messages, only process with assistant if mentioned
+                        if(signalMessage.Envelope.DataMessage.GroupInfo != null)
+                        {
+                            if (signalMessage.Envelope.DataMessage.Mentions?.Any(e => e.Name == _registeredAccount) != true)
+                            {
+                                _logger.LogDebug("Not mentioned in group chat - message logged but not processed by assistant");
+                                return;
+                            }
+                        }
+
+                        _logger.LogInformation("Message sent in chat with {Group}", source);
+                        await _signalService.IndicateTypingAsync(group ?? source);
 
                         try
                         {
-                            var userId = signalMessage.Envelope.SourceNumber ?? signalMessage.Envelope.Source;
+                            var userId = group ?? source;
                             var assistantResponse = await _assistantService.SendMessageAsync(
                                 signalMessage.Envelope.DataMessage.Message, 
                                 userId);
                             
-                            _logger.LogInformation("Assistant response for user {UserId}: {Response}", userId, assistantResponse);
+                            _logger.LogDebug("Assistant response for user {UserId}: {Response}", userId, assistantResponse);
 
                             if (assistantResponse != null && assistantResponse != "")
                             {
-                                await _signalService.SendMessageAsync(assistantResponse);
+                                await _signalService.SendMessageAsync(assistantResponse, source, group);
                             }
                         }
                         catch (Exception ex)
                         {
                             _logger.LogError(ex, "Failed to send message to assistant service");
-                            await _signalService.HideIndicatorAsync();
+                            await _signalService.HideIndicatorAsync(group ?? source);
                         }
                     }
                 }

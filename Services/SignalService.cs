@@ -44,9 +44,9 @@ internal partial class SignalJsonContext : JsonSerializerContext
 
 public interface ISignalService
 {
-    Task<string> SendMessageAsync(string message);
-    Task IndicateTypingAsync();
-    Task HideIndicatorAsync();
+    Task<string> SendMessageAsync(string message, string recipient, string? group);
+    Task IndicateTypingAsync(string recipient);
+    Task HideIndicatorAsync(string recipient);
 }
 
 public class SignalService(HttpClient httpClient, ITimescaleDbService timescaleDbService, ILogger<SignalService> logger, IConfiguration configuration) : ISignalService
@@ -56,9 +56,8 @@ public class SignalService(HttpClient httpClient, ITimescaleDbService timescaleD
     private readonly ILogger<SignalService> _logger = logger;
     private readonly string _signalEndpoint = configuration["SIGNAL_ENDPOINT"] ?? throw new InvalidOperationException("SIGNAL_ENDPOINT environment variable is missing");
     private readonly string _registered_account = configuration["REGISTERED_ACCOUNT"] ?? throw new InvalidOperationException("REGISTERED_ACCOUNT environment variable is required");
-    private readonly string _recipient_account = configuration["RECIPIENT_ACCOUNT"] ?? throw new InvalidOperationException("RECIPIENT_ACCOUNT environment variable is required");
 
-    public async Task<string> SendMessageAsync(string message)
+    public async Task<string> SendMessageAsync(string message, string recipient, string? group)
     {
         try
         {
@@ -67,7 +66,7 @@ public class SignalService(HttpClient httpClient, ITimescaleDbService timescaleD
             {
                 Message = message,
                 Number = _registered_account,
-                Recipients = [_recipient_account]
+                Recipients = [group ?? recipient]
             };
 
             _logger.LogInformation("Sending message to Signal endpoint: {Endpoint}", _signalEndpoint);
@@ -90,7 +89,8 @@ public class SignalService(HttpClient httpClient, ITimescaleDbService timescaleD
                         // Queue message for TimescaleDB insertion (fire and forget)
                         try
                         {
-                            var messageRecords = MessageRecord.FromSignalSendRequest(body, responseModel.Timestamp);
+                            body.Recipients = [recipient];
+                            var messageRecords = MessageRecord.FromSignalSendRequest(body, responseModel.Timestamp, group);
                             await Task.WhenAll(messageRecords.Select(_timescaleDbService.QueueMessageAsync));
                             _logger.LogDebug("Message queued for TimescaleDB insertion");
                         }
@@ -119,14 +119,14 @@ public class SignalService(HttpClient httpClient, ITimescaleDbService timescaleD
         }
     }
 
-    public async Task IndicateTypingAsync()
+    public async Task IndicateTypingAsync(string recipient)
     {
         try
         {
             var requestUrl = $"http://{_signalEndpoint}/v1/typing-indicator/{_registered_account}";
             var body = new SignalTypeIndicatorRequest()
             {
-                Recipient = _recipient_account
+                Recipient = recipient
             };
 
             _logger.LogInformation("Trigger typing indicator at Signal endpoint: {Endpoint}", _signalEndpoint);
@@ -154,7 +154,7 @@ public class SignalService(HttpClient httpClient, ITimescaleDbService timescaleD
         }
     }
 
-    public async Task HideIndicatorAsync()
+    public async Task HideIndicatorAsync(string recipient)
     {
         try
         {
@@ -163,7 +163,7 @@ public class SignalService(HttpClient httpClient, ITimescaleDbService timescaleD
             var requestUrl = $"http://{signalEndpoint}/v1/typing-indicator/{number}";
             var body = new SignalTypeIndicatorRequest()
             {
-                Recipient = _recipient_account
+                Recipient = recipient
             };
 
             _logger.LogInformation("Hide typing indicator at Signal endpoint: {Endpoint}", signalEndpoint);
